@@ -358,12 +358,36 @@
             }
         }
 
-        // Initialize canvas size
+        // Initialize canvas size with DPI scaling support
         function resizeCanvas() {
             canvasWidth = window.innerWidth;
             canvasHeight = window.innerHeight;
-            canvas.width = canvasWidth;
-            canvas.height = canvasHeight;
+            
+            // Handle high-DPI displays (Retina, etc.)
+            const devicePixelRatio = window.devicePixelRatio || 1;
+            const isHighDPI = devicePixelRatio > 1;
+            
+            if (isHighDPI) {
+                // For high-DPI displays, we need to compensate for the scaling
+                // by making the canvas smaller so the map appears at the right size
+                canvas.width = canvasWidth;
+                canvas.height = canvasHeight;
+                canvas.style.width = canvasWidth + 'px';
+                canvas.style.height = canvasHeight + 'px';
+                
+                // Reset any existing transforms
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+            } else {
+                // Standard DPI display
+                canvas.width = canvasWidth;
+                canvas.height = canvasHeight;
+                canvas.style.width = canvasWidth + 'px';
+                canvas.style.height = canvasHeight + 'px';
+                
+                // Reset any existing transforms
+                ctx.setTransform(1, 0, 0, 1, 0, 0);
+            }
+            
             draw();
         }
 
@@ -500,11 +524,29 @@
 
             // Draw the map background if loaded
             if (mapLoaded) {
-                ctx.drawImage(
-                    mapImage,
-                    viewportX, viewportY, canvasWidth, canvasHeight,
-                    0, 0, canvasWidth, canvasHeight
-                );
+                // For high-DPI displays, show more of the map to compensate for the zoom
+                const devicePixelRatio = window.devicePixelRatio || 1;
+                if (devicePixelRatio > 1) {
+                    // Show 2x more of the map to compensate for 2x DPI scaling
+                    const mapScale = devicePixelRatio;
+                    const scaledWidth = canvasWidth * mapScale;
+                    const scaledHeight = canvasHeight * mapScale;
+                    const offsetX = (scaledWidth - canvasWidth) / 2;
+                    const offsetY = (scaledHeight - canvasHeight) / 2;
+                    
+                    ctx.drawImage(
+                        mapImage,
+                        viewportX - offsetX, viewportY - offsetY, scaledWidth, scaledHeight,
+                        0, 0, canvasWidth, canvasHeight
+                    );
+                } else {
+                    // Standard DPI - use original logic
+                    ctx.drawImage(
+                        mapImage,
+                        viewportX, viewportY, canvasWidth, canvasHeight,
+                        0, 0, canvasWidth, canvasHeight
+                    );
+                }
             } else {
                 // Draw placeholder background
                 ctx.fillStyle = '#2d1b3d';

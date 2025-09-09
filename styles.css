@@ -17,6 +17,9 @@ body {
 #gameCanvas {
     display: block;
     cursor: crosshair;
+    /* Ensure canvas renders crisply on high-DPI displays */
+    image-rendering: -webkit-optimize-contrast;
+    image-rendering: crisp-edges;
 }
 
 #ui {
