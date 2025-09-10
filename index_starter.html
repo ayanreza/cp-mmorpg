@@ -143,7 +143,10 @@
         const coordinatesDiv = document.getElementById('coordinates');
         const spriteSelect = document.getElementById('spriteSelect');
         const debugInfo = document.getElementById('debugInfo');
-        const ws = new WebSocket('ws://localhost:8080');
+        // Determine WebSocket URL based on current location
+        const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+        const wsUrl = `${protocol}//${window.location.host}`;
+        const ws = new WebSocket(wsUrl);
 
         let players = {};
         let myPlayerId = null;

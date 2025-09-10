@@ -2,9 +2,62 @@
 const WebSocket = require('ws');
 const fs = require('fs');
 const path = require('path');
+const http = require('http');
 
-// Create a new WebSocket server on port 8080
-const wss = new WebSocket.Server({ port: 8080 });
+// Create HTTP server and WebSocket server
+const PORT = process.env.PORT || 8080;
+const NODE_ENV = process.env.NODE_ENV || 'development';
+const server = http.createServer();
+
+// Static file serving
+server.on('request', (req, res) => {
+    let filePath = '.' + req.url;
+    
+    // Default to index.html for root path
+    if (filePath === './') {
+        filePath = './index_starter.html';
+    }
+    
+    // Determine content type
+    const extname = String(path.extname(filePath)).toLowerCase();
+    const mimeTypes = {
+        '.html': 'text/html',
+        '.js': 'text/javascript',
+        '.css': 'text/css',
+        '.json': 'application/json',
+        '.png': 'image/png',
+        '.jpg': 'image/jpg',
+        '.gif': 'image/gif',
+        '.svg': 'image/svg+xml',
+        '.wav': 'audio/wav',
+        '.mp4': 'video/mp4',
+        '.woff': 'application/font-woff',
+        '.ttf': 'application/font-ttf',
+        '.eot': 'application/vnd.ms-fontobject',
+        '.otf': 'application/font-otf',
+        '.wasm': 'application/wasm'
+    };
+    
+    const contentType = mimeTypes[extname] || 'application/octet-stream';
+    
+    fs.readFile(filePath, (error, content) => {
+        if (error) {
+            if (error.code == 'ENOENT') {
+                res.writeHead(404, { 'Content-Type': 'text/html' });
+                res.end('<h1>404 Not Found</h1>', 'utf-8');
+            } else {
+                res.writeHead(500);
+                res.end('Server Error: ' + error.code + ' ..\n');
+            }
+        } else {
+            res.writeHead(200, { 'Content-Type': contentType });
+            res.end(content, 'utf-8');
+        }
+    });
+});
+
+// Create WebSocket server attached to HTTP server
+const wss = new WebSocket.Server({ server });
 
 // This object will store the state of all players in the game world
 const players = {};
@@ -266,9 +319,17 @@ initializeSpritesDirectory();
 loadSpriteDatabase();
 loadState();
 
-console.log('Halloween MMORPG Server with Animation Support is running on ws://localhost:8080');
-console.log(`World dimensions: ${world.width} x ${world.height}`);
-console.log(`Available sprites: ${Object.keys(spriteDatabase).join(', ')}`);
+// Start the HTTP server
+server.listen(PORT, () => {
+    console.log(`Halloween MMORPG Server with Animation Support is running on port ${PORT}`);
+    console.log(`Environment: ${NODE_ENV}`);
+    if (NODE_ENV === 'development') {
+        console.log(`HTTP server: http://localhost:${PORT}`);
+        console.log(`WebSocket server: ws://localhost:${PORT}`);
+    }
+    console.log(`World dimensions: ${world.width} x ${world.height}`);
+    console.log(`Available sprites: ${Object.keys(spriteDatabase).join(', ')}`);
+});
 
 // This function sends a message to all connected clients
 function broadcast(data, excludePlayerId = null) {
