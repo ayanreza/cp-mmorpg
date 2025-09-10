@@ -347,9 +347,10 @@
                 // Send to server
                 statusDiv.textContent = 'Uploading animated sprite...';
                 ws.send(JSON.stringify({
-                    type: 'upload_sprite',
+                    type: 'sprite',
+                    action: 'upload',
                     spriteName: spriteName,
-                    imageData: imageData
+                    spriteFrames: imageData
                 }));
 
             } catch (error) {
@@ -497,8 +498,9 @@
         spriteSelect.addEventListener('change', () => {
             if (myPlayerId && ws.readyState === WebSocket.OPEN) {
                 ws.send(JSON.stringify({
-                    type: 'player_change_sprite',
-                    sprite: spriteSelect.value
+                    type: 'player',
+                    action: 'change_sprite',
+                    spriteName: spriteSelect.value
                 }));
             }
         });
@@ -699,7 +701,7 @@
         ws.onopen = () => {
             statusDiv.textContent = 'Connected! Loading sprites...';
             console.log('Connected to the server');
-            ws.send(JSON.stringify({ type: 'request_sprites' }));
+            ws.send(JSON.stringify({ type: 'sprite', action: 'list' }));
         };
 
         // Handle incoming messages from the server
@@ -708,91 +710,162 @@
             console.log('Received message:', data.type, data);
 
             switch (data.type) {
-                case 'sprites_response':
-                    spriteDatabase = data.sprites;
-                    console.log('Received sprites:', Object.keys(spriteDatabase));
-                    console.log('Sprite database:', spriteDatabase);
-                    
-                    if (Object.keys(spriteDatabase).length === 0) {
-                        statusDiv.textContent = 'No sprites found on server. Upload some animated sprites to get started!';
-                        return;
-                    }
-                    
-                    updateSpriteSelect();
-                    preloadSprites();
-                    
-                    // Join game with default sprite
-                    const defaultSprite = Object.keys(spriteDatabase)[0] || 'default';
-                    console.log('Joining with sprite:', defaultSprite);
-                    ws.send(JSON.stringify({ 
-                        type: 'player_join', 
-                        sprite: defaultSprite, 
-                        username: 'Halloween Explorer'
-                    }));
+                case 'response':
+                    handleServerResponse(data);
                     break;
                     
-                case 'sprite_added':
-                    // New sprite was added to the database
-                    spriteDatabase[data.sprite.name] = data.sprite;
-                    updateSpriteSelect();
-                    preloadSprites();
-                    statusDiv.textContent = `New animated sprite "${data.sprite.name}" added!`;
+                case 'update':
+                    handleServerUpdate(data);
                     break;
                     
-                case 'sprite_upload_success':
-                    statusDiv.textContent = `Animated sprite "${data.sprite.name}" uploaded successfully!`;
-                    // Clear upload form
-                    document.getElementById('spriteName').value = '';
-                    const directions = ['north', 'south', 'east'];
-                    directions.forEach(dir => {
-                        for (let frame = 1; frame <= 3; frame++) {
-                            const fileId = `${dir}${frame}File`;
-                            const previewId = `${dir}${frame}Preview`;
-                            const sizeId = `${dir}${frame}Size`;
-                            document.getElementById(fileId).value = '';
-                            document.getElementById(previewId).style.display = 'none';
-                            document.getElementById(sizeId).textContent = '';
-                            delete processedImages[fileId];
-                        }
-                    });
-                    toggleUpload(); // Hide upload area
-                    break;
-                    
-                case 'sprite_upload_error':
-                    statusDiv.textContent = 'Animated sprite upload failed: ' + data.error;
-                    break;
-                    
-                case 'world_state':
-                    players = data.players;
-                    myPlayerId = data.myPlayerId;
-                    statusDiv.textContent = `World joined! Players online: ${Object.keys(players).length}`;
-                    updateViewport();
-                    break;
-                    
-                case 'player_joined':
-                    players[data.player.id] = data.player;
-                    if (data.player.id !== myPlayerId) {
-                        statusDiv.textContent = `Player ${data.player.username || data.player.id} joined! Players online: ${Object.keys(players).length}`;
-                    }
-                    break;
-                    
-                case 'player_moved':
-                    if (players[data.player.id]) {
-                        players[data.player.id] = { ...players[data.player.id], ...data.player };
-                        if (data.player.id === myPlayerId) {
-                            updateViewport();
-                        }
-                    }
-                    break;
-                    
-                case 'player_left':
-                    const leftPlayer = players[data.playerId];
-                    delete players[data.playerId];
-                    statusDiv.textContent = `Player ${leftPlayer ? (leftPlayer.username || data.playerId) : data.playerId} left. Players online: ${Object.keys(players).length}`;
+                default:
+                    console.warn('Unknown message type:', data.type);
                     break;
             }
             draw();
         };
+
+        // Handle new server response messages
+        function handleServerResponse(data) {
+            console.log('Server response:', data.action, data.success, data.error || 'no error');
+            
+            switch (data.action) {
+                case 'list':
+                    if (data.success && data.sprites) {
+                        spriteDatabase = data.sprites;
+                        console.log('Received sprites:', Object.keys(spriteDatabase));
+                        console.log('Sprite database:', spriteDatabase);
+                        
+                        if (Object.keys(spriteDatabase).length === 0) {
+                            statusDiv.textContent = 'No sprites found on server. Upload some animated sprites to get started!';
+                            return;
+                        }
+                        
+                        updateSpriteSelect();
+                        preloadSprites();
+                        
+                        // Join game with default sprite
+                        const defaultSprite = Object.keys(spriteDatabase)[0] || 'default';
+                        console.log('Joining with sprite:', defaultSprite);
+                        ws.send(JSON.stringify({ 
+                            type: 'player',
+                            action: 'join',
+                            playerInfo: {
+                                sprite: defaultSprite, 
+                                username: 'Halloween Explorer'
+                            }
+                        }));
+                    } else {
+                        statusDiv.textContent = 'Failed to load sprites: ' + (data.error || 'Unknown error');
+                    }
+                    break;
+                    
+                case 'upload':
+                    if (data.success) {
+                        statusDiv.textContent = `Animated sprite uploaded successfully!`;
+                        // Clear upload form
+                        document.getElementById('spriteName').value = '';
+                        const directions = ['north', 'south', 'east'];
+                        directions.forEach(dir => {
+                            for (let frame = 1; frame <= 3; frame++) {
+                                const fileId = `${dir}${frame}File`;
+                                const previewId = `${dir}${frame}Preview`;
+                                const sizeId = `${dir}${frame}Size`;
+                                document.getElementById(fileId).value = '';
+                                document.getElementById(previewId).style.display = 'none';
+                                document.getElementById(sizeId).textContent = '';
+                                delete processedImages[fileId];
+                            }
+                        });
+                        toggleUpload(); // Hide upload area
+                    } else {
+                        statusDiv.textContent = 'Animated sprite upload failed: ' + (data.error || 'Unknown error');
+                    }
+                    break;
+                    
+                case 'join':
+                    if (data.success && data.worldState && data.playerId) {
+                        players = data.worldState;
+                        myPlayerId = data.playerId;
+                        statusDiv.textContent = `World joined! Players online: ${Object.keys(players).length}`;
+                        updateViewport();
+                    } else {
+                        statusDiv.textContent = 'Failed to join world: ' + (data.error || 'Unknown error');
+                    }
+                    break;
+                    
+                case 'change_sprite':
+                    if (data.success) {
+                        console.log('Sprite changed successfully');
+                    } else {
+                        statusDiv.textContent = 'Failed to change sprite: ' + (data.error || 'Unknown error');
+                    }
+                    break;
+                    
+                case 'move':
+                    if (!data.success) {
+                        statusDiv.textContent = 'Movement failed: ' + (data.error || 'Unknown error');
+                    }
+                    break;
+            }
+        }
+
+        // Handle new server update messages
+        function handleServerUpdate(data) {
+            console.log('Server update:', data.category, data.action);
+            
+            switch (data.category) {
+                case 'sprite':
+                    switch (data.action) {
+                        case 'added':
+                            if (data.sprite) {
+                                spriteDatabase[data.sprite.name] = data.sprite;
+                                updateSpriteSelect();
+                                preloadSprites();
+                                statusDiv.textContent = `New animated sprite "${data.sprite.name}" added!`;
+                            }
+                            break;
+                    }
+                    break;
+                    
+                case 'player':
+                    switch (data.action) {
+                        case 'joined':
+                            if (data.player) {
+                                players[data.player.id] = data.player;
+                                if (data.player.id !== myPlayerId) {
+                                    statusDiv.textContent = `Player ${data.player.username || data.player.id} joined! Players online: ${Object.keys(players).length}`;
+                                }
+                            }
+                            break;
+                            
+                        case 'moved':
+                            if (data.player && players[data.player.id]) {
+                                players[data.player.id] = { ...players[data.player.id], ...data.player };
+                                if (data.player.id === myPlayerId) {
+                                    updateViewport();
+                                }
+                            }
+                            break;
+                            
+                        case 'changed_sprite':
+                            if (data.player && players[data.player.id]) {
+                                players[data.player.id] = { ...players[data.player.id], ...data.player };
+                            }
+                            break;
+                            
+                        case 'left':
+                            if (data.playerId) {
+                                const leftPlayer = players[data.playerId];
+                                delete players[data.playerId];
+                                statusDiv.textContent = `Player ${leftPlayer ? (leftPlayer.username || data.playerId) : data.playerId} left. Players online: ${Object.keys(players).length}`;
+                            }
+                            break;
+                    }
+                    break;
+            }
+        }
+
 
         // Handle connection closing
         ws.onclose = () => {
@@ -837,7 +910,11 @@
             }
             if (direction) {
                 e.preventDefault();
-                ws.send(JSON.stringify({ type: 'player_move', direction }));
+                ws.send(JSON.stringify({ 
+                    type: 'player',
+                    action: 'move',
+                    movement: { direction }
+                }));
             }
         });
 
@@ -849,9 +926,12 @@
             const worldPos = screenToWorld(screenX, screenY);
             
             ws.send(JSON.stringify({ 
-                type: 'player_move_to', 
-                x: worldPos.x, 
-                y: worldPos.y 
+                type: 'player',
+                action: 'move',
+                movement: {
+                    x: worldPos.x, 
+                    y: worldPos.y 
+                }
             }));
         });
 

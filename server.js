@@ -182,10 +182,7 @@ function addCustomSprite(spriteName, imageData) {
     saveSpriteDatabase();
     
     // Broadcast new sprite to all connected clients
-    broadcast({
-        type: 'sprite_added',
-        sprite: spriteData
-    });
+    broadcastUpdate('sprite', 'added', { sprite: spriteData });
     
     return spriteData;
 }
@@ -290,6 +287,185 @@ function sendToPlayer(playerId, data) {
     }
 }
 
+// Helper function to send responses to players
+function sendResponse(playerId, action, success, responseData = {}, error = null) {
+    const response = {
+        type: 'response',
+        action: action,
+        success: success
+    };
+    
+    if (success) {
+        // Spread responseData directly into the response object for cleaner structure
+        Object.assign(response, responseData);
+    }
+    
+    if (!success && error !== null) {
+        response.error = error;
+    }
+    
+    sendToPlayer(playerId, response);
+}
+
+// Helper function to broadcast updates
+function broadcastUpdate(category, action, updateData, excludePlayerId = null) {
+    const update = {
+        type: 'update',
+        category: category,
+        action: action
+    };
+    
+    // Spread updateData directly into the update object for cleaner structure
+    Object.assign(update, updateData);
+    
+    broadcast(update, excludePlayerId);
+}
+
+// Message handler functions for simplified protocol
+function handleSpriteMessage(playerId, data) {
+    switch (data.action) {
+        case 'list':
+            sendResponse(playerId, 'list', true, { sprites: spriteDatabase });
+            break;
+            
+        case 'upload':
+            try {
+                const newSprite = addCustomSprite(data.spriteName, data.spriteFrames);
+                sendResponse(playerId, 'upload', true, { sprite: newSprite });
+            } catch (error) {
+                sendResponse(playerId, 'upload', false, null, error.message);
+            }
+            break;
+            
+        default:
+            sendResponse(playerId, data.action || 'unknown', false, null, 'Unknown sprite action');
+    }
+}
+
+function handlePlayerMessage(playerId, data) {
+    switch (data.action) {
+        case 'join':
+            handlePlayerJoin(playerId, data.playerInfo);
+            break;
+            
+        case 'move':
+            handlePlayerMove(playerId, data.movement);
+            break;
+            
+        case 'change_sprite':
+            handlePlayerChangeSprite(playerId, data.spriteName);
+            break;
+            
+        default:
+            sendResponse(playerId, data.action || 'unknown', false, null, 'Unknown player action');
+    }
+}
+
+function handlePlayerJoin(playerId, playerInfo) {
+    if (!players[playerId]) {
+        // Validate sprite exists
+        const spriteName = playerInfo.sprite && spriteDatabase[playerInfo.sprite] ? playerInfo.sprite : 'default';
+        
+        players[playerId] = {
+            id: playerId,
+            x: Math.floor(Math.random() * (world.width - 50)),
+            y: Math.floor(Math.random() * (world.height - 50)),
+            sprite: spriteName,
+            facing: 'south', // Default facing direction
+            isMoving: false,
+            username: playerInfo.username || `Player${playerId.substr(0, 4)}`,
+            targetX: null,
+            targetY: null,
+            animationFrame: 0, // Current animation frame (0-2)
+            lastAnimationUpdate: Date.now()
+        };
+        console.log(`Player ${playerId} (${players[playerId].username}) joined with sprite "${spriteName}".`);
+    } else {
+        console.log(`Player ${playerId} (${players[playerId].username}) reconnected.`);
+    }
+    
+    sendResponse(playerId, 'join', true, {
+        playerId: playerId,
+        worldState: players
+    });
+    
+    broadcastUpdate('player', 'joined', { player: players[playerId] }, playerId);
+}
+
+function handlePlayerMove(playerId, movement) {
+    const player = players[playerId];
+    if (!player) return;
+    
+    if (movement.stop) {
+        // Stop movement
+        player.isMoving = false;
+        player.targetX = null;
+        player.targetY = null;
+        player.animationFrame = 0; // Reset to idle frame
+        broadcastUpdate('player', 'moved', { player });
+    } else if (movement.direction) {
+        // WASD movement
+        const speed = 15;
+        let newX = player.x;
+        let newY = player.y;
+        let newFacing = player.facing;
+        
+        switch (movement.direction) {
+            case 'up':
+                newY = Math.max(0, player.y - speed);
+                newFacing = 'north';
+                break;
+            case 'down':
+                newY = Math.min(world.height - 50, player.y + speed);
+                newFacing = 'south';
+                break;
+            case 'left':
+                newX = Math.max(0, player.x - speed);
+                newFacing = 'west';
+                break;
+            case 'right':
+                newX = Math.min(world.width - 50, player.x + speed);
+                newFacing = 'east';
+                break;
+        }
+        
+        player.x = newX;
+        player.y = newY;
+        player.facing = newFacing;
+        player.isMoving = true;
+        player.targetX = null;
+        player.targetY = null;
+        
+        // Update animation frame when moving
+        const now = Date.now();
+        if (now - player.lastAnimationUpdate > 200) { // 200ms per frame
+            player.animationFrame = (player.animationFrame + 1) % 3;
+            player.lastAnimationUpdate = now;
+        }
+        
+        broadcastUpdate('player', 'moved', { player });
+    } else if (movement.x !== undefined && movement.y !== undefined) {
+        // Click-to-move
+        player.targetX = clamp(movement.x - 25, 0, world.width - 50);
+        player.targetY = clamp(movement.y - 25, 0, world.height - 50);
+        console.log(`Player ${playerId} moving to (${player.targetX}, ${player.targetY})`);
+    }
+}
+
+function handlePlayerChangeSprite(playerId, spriteName) {
+    const player = players[playerId];
+    if (player && spriteName && spriteDatabase[spriteName]) {
+        player.sprite = spriteName;
+        player.animationFrame = 0; // Reset animation frame
+        console.log(`Player ${playerId} changed sprite to "${spriteName}"`);
+        sendResponse(playerId, 'change_sprite', true);
+        broadcastUpdate('player', 'changed_sprite', { player });
+    } else {
+        sendResponse(playerId, 'change_sprite', false, null, 
+            spriteName ? `Sprite "${spriteName}" does not exist` : 'No sprite specified');
+    }
+}
+
 // Handle new connections to the server
 wss.on('connection', ws => {
     const playerId = Math.random().toString(36).substr(2, 9);
@@ -301,144 +477,28 @@ wss.on('connection', ws => {
             const data = JSON.parse(message);
 
             switch (data.type) {
-                case 'request_sprites':
-                    ws.send(JSON.stringify({ 
-                        type: 'sprites_response', 
-                        sprites: spriteDatabase 
-                    }));
+                case 'sprite':
+                    handleSpriteMessage(playerId, data);
                     break;
                     
-                case 'upload_sprite':
-                    try {
-                        const newSprite = addCustomSprite(data.spriteName, data.imageData);
-                        ws.send(JSON.stringify({
-                            type: 'sprite_upload_success',
-                            sprite: newSprite
-                        }));
-                    } catch (error) {
-                        ws.send(JSON.stringify({
-                            type: 'sprite_upload_error',
-                            error: error.message
-                        }));
-                    }
+                case 'player':
+                    handlePlayerMessage(playerId, data);
                     break;
                     
-                case 'player_join':
-                    if (!players[playerId]) {
-                        // Validate sprite exists
-                        const spriteName = data.sprite && spriteDatabase[data.sprite] ? data.sprite : 'default';
-                        
-                        players[playerId] = {
-                            id: playerId,
-                            x: Math.floor(Math.random() * (world.width - 50)),
-                            y: Math.floor(Math.random() * (world.height - 50)),
-                            sprite: spriteName,
-                            facing: 'south', // Default facing direction
-                            isMoving: false,
-                            username: data.username || `Player${playerId.substr(0, 4)}`,
-                            targetX: null,
-                            targetY: null,
-                            animationFrame: 0, // Current animation frame (0-2)
-                            lastAnimationUpdate: Date.now()
-                        };
-                        console.log(`Player ${playerId} (${players[playerId].username}) joined with sprite "${spriteName}".`);
-                    } else {
-                        console.log(`Player ${playerId} (${players[playerId].username}) reconnected.`);
-                    }
-                    
-                    ws.send(JSON.stringify({ 
-                        type: 'world_state', 
-                        players,
-                        myPlayerId: playerId
-                    }));
-                    
-                    broadcast({ type: 'player_joined', player: players[playerId] }, playerId);
-                    break;
-
-                case 'player_move':
-                    const player = players[playerId];
-                    if (player) {
-                        const speed = 15;
-                        let newX = player.x;
-                        let newY = player.y;
-                        let newFacing = player.facing;
-                        
-                        switch (data.direction) {
-                            case 'up':
-                                newY = Math.max(0, player.y - speed);
-                                newFacing = 'north';
-                                break;
-                            case 'down':
-                                newY = Math.min(world.height - 50, player.y + speed);
-                                newFacing = 'south';
-                                break;
-                            case 'left':
-                                newX = Math.max(0, player.x - speed);
-                                newFacing = 'west';
-                                break;
-                            case 'right':
-                                newX = Math.min(world.width - 50, player.x + speed);
-                                newFacing = 'east';
-                                break;
-                        }
-                        
-                        player.x = newX;
-                        player.y = newY;
-                        player.facing = newFacing;
-                        player.isMoving = true;
-                        player.targetX = null;
-                        player.targetY = null;
-                        
-                        // Update animation frame when moving
-                        const now = Date.now();
-                        if (now - player.lastAnimationUpdate > 200) { // 200ms per frame
-                            player.animationFrame = (player.animationFrame + 1) % 3;
-                            player.lastAnimationUpdate = now;
-                        }
-                        
-                        broadcast({ type: 'player_moved', player });
-                    }
-                    break;
-                    
-                case 'player_move_to':
-                    const clickPlayer = players[playerId];
-                    if (clickPlayer) {
-                        clickPlayer.targetX = clamp(data.x - 25, 0, world.width - 50);
-                        clickPlayer.targetY = clamp(data.y - 25, 0, world.height - 50);
-                        console.log(`Player ${playerId} moving to (${clickPlayer.targetX}, ${clickPlayer.targetY})`);
-                    }
-                    break;
-                    
-                case 'player_stop':
-                    const stoppedPlayer = players[playerId];
-                    if (stoppedPlayer) {
-                        stoppedPlayer.isMoving = false;
-                        stoppedPlayer.targetX = null;
-                        stoppedPlayer.targetY = null;
-                        stoppedPlayer.animationFrame = 0; // Reset to idle frame
-                        broadcast({ type: 'player_moved', player: stoppedPlayer });
-                    }
-                    break;
-                    
-                case 'player_change_sprite':
-                    const spritePlayer = players[playerId];
-                    if (spritePlayer && data.sprite && spriteDatabase[data.sprite]) {
-                        spritePlayer.sprite = data.sprite;
-                        spritePlayer.animationFrame = 0; // Reset animation frame
-                        console.log(`Player ${playerId} changed sprite to "${data.sprite}"`);
-                        broadcast({ type: 'player_moved', player: spritePlayer });
-                    }
+                default:
+                    sendResponse(playerId, 'unknown', false, null, `Unknown message type: ${data.type}`);
                     break;
             }
         } catch (error) {
             console.error('Failed to parse message or handle client action:', error);
+            sendResponse(playerId, 'error', false, null, 'Invalid message format');
         }
     });
 
     ws.on('close', () => {
         console.log(`Player ${playerId} has disconnected.`);
         connections.delete(playerId);
-        broadcast({ type: 'player_left', playerId });
+        broadcastUpdate('player', 'left', { playerId });
         saveState();
     });
 
@@ -487,7 +547,7 @@ setInterval(() => {
         for (const playerId in players) {
             const player = players[playerId];
             if (player.targetX !== null || player.targetY !== null || player.isMoving) {
-                broadcast({ type: 'player_moved', player });
+                broadcastUpdate('player', 'moved', { player });
             }
         }
     }
