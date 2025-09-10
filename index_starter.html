@@ -578,8 +578,24 @@
             for (const id in players) {
                 const player = players[id];
                 
-                const screenX = player.x - viewportX;
-                const screenY = player.y - viewportY;
+                // Apply the same offset calculation as the map for high-DPI displays
+                const devicePixelRatio = window.devicePixelRatio || 1;
+                let adjustedViewportX = viewportX;
+                let adjustedViewportY = viewportY;
+                
+                if (devicePixelRatio > 1) {
+                    const mapScale = devicePixelRatio;
+                    const scaledWidth = canvasWidth * mapScale;
+                    const scaledHeight = canvasHeight * mapScale;
+                    const offsetX = (scaledWidth - canvasWidth) / 2;
+                    const offsetY = (scaledHeight - canvasHeight) / 2;
+                    
+                    adjustedViewportX = viewportX - offsetX;
+                    adjustedViewportY = viewportY - offsetY;
+                }
+                
+                const screenX = player.x - adjustedViewportX;
+                const screenY = player.y - adjustedViewportY;
                 
                 // Get the appropriate sprite image with animation frame
                 const facing = player.facing || 'south';
